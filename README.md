@@ -38,7 +38,7 @@ survival-model-benchmark-r/
 ├── README.md
 ├── .gitignore
 ├── LICENSE
-├── CITATION.cff
+
 ├── data/
 │   ├── README.md
 │   └── .gitkeep
