@@ -1,32 +1,4 @@
-## ============================================================
-## 08_aggregation_and_stats.R
-##
-## Aggregation and statistical comparison routines for the
-## benchmark. Three sections:
-##
-##   1. Per-cell summaries          aggregate_metrics()
-##      Takes the 10 per-fold metric values for one
-##      (dataset, regime, model, metric) cell and produces
-##      (median, IQR low, IQR high, n_finite). Robust to NA
-##      values from non-converged fits (see Section IV-D and
-##      the Cox failure case discussed in Section V).
-##
-##   2. Paired Wilcoxon comparisons  pairwise_wilcoxon_holm()
-##      For each (dataset, regime, metric) stratum, compares
-##      every pair of models using paired Wilcoxon signed-rank
-##      tests across cross-validation folds. Applies Holm
-##      correction WITHIN each stratum, as specified in
-##      Section III-C. Returns a long table of pairwise
-##      results.
-##
-##   3. Empirical partition          construct_partition()
-##      For each (dataset, regime) cell, identifies the model
-##      with the highest median C-index. Section VI-A. Returns
-##      the (c, EPV, best_model) tuples that Figure 5 will
-##      visualize.
-##
-## All three operate on a "long" results data frame with the
-## canonical columns produced by the main loop:
+
 ##
 ##   dataset       character (e.g. "METABRIC")
 ##   regime        character or numeric (e.g. "0.50" or 0.50)
@@ -44,16 +16,7 @@
 ##   fit_time_sec  numeric
 ##   converged     logical or NA
 ##
-## The main loop appends one row per (dataset, regime, fold, model)
-## to this table, and the functions in this file consume it.
-## ============================================================
 
-
-## ------------------------------------------------------------
-## Internal helper: robust median / IQR summary that handles
-## the edge cases of all-NA, all-equal, and small-n inputs
-## without producing warnings or NaN values.
-## ------------------------------------------------------------
 .summarize_vec <- function(x) {
   x <- x[is.finite(x)]
   n <- length(x)
@@ -66,32 +29,6 @@
 }
 
 
-## ============================================================
-## aggregate_metrics()
-##
-## Per-cell summaries of the four headline metrics across the
-## 10 outer folds.
-##
-## Arguments:
-##   results_df   long data frame with one row per
-##                (dataset, regime, fold, model) and the four
-##                metric columns
-##   metrics      character vector of metric column names to
-##                summarize. Default: the four metrics from
-##                Section III-C plus EPV-related diagnostic
-##                columns
-##
-## Returns a wide data frame with one row per
-## (dataset, regime, model) and columns:
-##   <metric>_median, <metric>_q25, <metric>_q75, <metric>_n
-## for each metric, plus the descriptive columns at the front.
-##
-## Cells with fewer than 5 finite folds out of 10 are flagged
-## via the n column but are NOT removed automatically. The
-## paper's results section can decide how to handle them; the
-## main loop will print a warning summary at the end so cells
-## with low completeness are visible.
-## ============================================================
 aggregate_metrics <- function(results_df,
                               metrics = c("harrell_c", "uno_c", "ibs",
                                           "calib_slope",
@@ -136,46 +73,7 @@ aggregate_metrics <- function(results_df,
 }
 
 
-## ============================================================
-## pairwise_wilcoxon_holm()
-##
-## Paired Wilcoxon signed-rank tests with Holm correction,
-## following Section III-C.
-##
-## For each (dataset, regime, metric) stratum, every pair of
-## models is compared on the 10 per-fold values using a paired
-## Wilcoxon signed-rank test. Within each stratum, p-values are
-## adjusted by Holm's method to control the family-wise error
-## rate at the chosen alpha across the m(m-1)/2 pairs of m models.
-##
-## We apply Holm WITHIN strata rather than globally because the
-## comparisons across (dataset, regime, metric) cells are
-## answering different scientific questions and pooling them
-## would be over-conservative. Section III-C is consistent with
-## this reading.
-##
-## Arguments:
-##   results_df    long results data frame
-##   metrics       character vector of metric column names to
-##                 compare; defaults to the four headline metrics
-##   alternative   "two.sided", "greater", or "less". Default
-##                 "two.sided" matches the recommendation of
-##                 recent benchmark studies cited in Section III-C
-##
-## Returns a long data frame with columns:
-##   dataset, regime, metric, model_a, model_b,
-##   median_a, median_b, median_diff,
-##   wilcoxon_p, p_holm, n_paired, conclusion
-##
-## `conclusion` is a short character flag in
-## {"a > b", "b > a", "ns"} based on p_holm < 0.05.
-## "ns" means not significant after Holm correction.
-##
-## For the paired test to be valid, both models must have
-## finite values on the SAME folds. We require at least 5
-## paired finite folds; otherwise the row records NA p-values
-## with conclusion "insufficient_data".
-## ============================================================
+
 pairwise_wilcoxon_holm <- function(results_df,
                                    metrics = c("harrell_c", "uno_c",
                                                "ibs", "calib_slope"),
@@ -308,51 +206,6 @@ pairwise_wilcoxon_holm <- function(results_df,
   do.call(rbind, rows)
 }
 
-
-## ============================================================
-## construct_partition()
-##
-## Empirical partition of the (c, EPV) plane, Section VI-A.
-##
-## For each (dataset, regime) cell, identifies the model with
-## the highest median C-index across the 10 outer folds. The
-## winning model, together with the cell's c (censoring rate)
-## and EPV, becomes one point in the partition that Figure 5
-## visualizes.
-##
-## Section VI explicitly says "across the 5x2 cross-validation
-## folds, together with the pair (c, EPV) computed from the
-## training folds." We compute (c, EPV) as the median of the
-## per-fold values within the cell. Reporting the median rather
-## than the mean is consistent with Section V's use of medians
-## throughout, and is more robust to the occasional fold where
-## a model fails to converge.
-##
-## Arguments:
-##   results_df       long results data frame
-##   metric           the metric on which "best" is judged.
-##                    Default "harrell_c" per Section VI-A;
-##                    "ibs" or "uno_c" can be substituted to
-##                    construct alternative partitions.
-##   higher_is_better logical; TRUE for C-indices, FALSE for IBS
-##   epv_column       column name to use for the EPV axis;
-##                    "epv" (model-specific) or "epv_raw"
-##                    (raw events-to-p ratio). Default "epv";
-##                    Section VI uses the model-specific EPV in
-##                    the headline partition and the raw ratio
-##                    in the sensitivity analysis.
-##
-## Returns a data frame with one row per (dataset, regime) and
-## columns:
-##   dataset, regime, c_observed, epv_observed,
-##   best_model, best_metric_median,
-##   second_model, second_metric_median, gap_to_second
-##
-## The gap_to_second column makes the partition's robustness
-## visible: cells where the best model wins by a tiny margin
-## should be read more cautiously than cells where it wins by
-## a wide margin.
-## ============================================================
 construct_partition <- function(results_df,
                                 metric = "harrell_c",
                                 higher_is_better = TRUE,
@@ -434,22 +287,6 @@ construct_partition <- function(results_df,
   do.call(rbind, rows)
 }
 
-
-## ============================================================
-## save_results()
-##
-## Convenience wrapper that takes the long results data frame
-## and writes the three downstream products to disk:
-##
-##   <out_dir>/raw_results.csv         the long per-fold table
-##   <out_dir>/aggregated.csv          per-cell median+IQR
-##   <out_dir>/pairwise_wilcoxon.csv   pairwise comparisons
-##   <out_dir>/partition.csv           best-model-per-cell
-##   <out_dir>/partition_raw_epv.csv   sensitivity to raw EPV
-##                                     (Section IV-E)
-##
-## Returns invisibly the list of paths written.
-## ============================================================
 save_results <- function(results_df, out_dir = "benchmark_results") {
   if (!dir.exists(out_dir)) {
     dir.create(out_dir, recursive = TRUE)
