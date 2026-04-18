@@ -1,24 +1,6 @@
-## ============================================================
-## generate_figures.R
-##
-## Generates all figures for the benchmark paper, reading from
-## benchmark_results/raw_results.csv. Each figure is:
-##   - displayed in the R graphics device
-##   - saved as a high-resolution PNG in benchmark_results/figures/
-##
-## Figures produced:
-##   fig1_c_index.png        C-index vs censoring rate (3 panels)
-##   fig2_ibs.png            IBS vs censoring rate (3 panels)
-##   fig3_calib_slope.png    Calibration slope grouped bars (3 panels)
-##   fig4_partition.png      Empirical partition of (c, EPV) plane
-##   fig5_fit_time.png       Wall-clock training time comparison
-##
-## Requirements: base R only (no ggplot2).
-## ============================================================
 
-## ------------------------------------------------------------
-## 0. Setup
-## ------------------------------------------------------------
+## generate_figures.R
+
 res <- read.csv("benchmark_results/raw_results.csv",
                 stringsAsFactors = FALSE)
 
@@ -91,9 +73,7 @@ agg <- do.call(rbind, lapply(
 rownames(agg) <- NULL
 
 
-## ------------------------------------------------------------
-## Helper: save current plot as PNG and display it
-## ------------------------------------------------------------
+
 save_and_show <- function(filename, width = 10, height = 4, res = 300) {
   ## Record the current plot, save to PNG, then replay on screen
   p <- recordPlot()
@@ -104,10 +84,6 @@ save_and_show <- function(filename, width = 10, height = 4, res = 300) {
   cat(sprintf("Saved: %s/%s\n", fig_dir, filename))
 }
 
-
-## ------------------------------------------------------------
-## Helper: three-panel line plot with error bars
-## ------------------------------------------------------------
 plot_metric_panels <- function(metric_med, metric_q25, metric_q75,
                                ylab, main_prefix,
                                higher_better = TRUE) {
@@ -177,9 +153,6 @@ plot_metric_panels <- function(metric_med, metric_q25, metric_q75,
 }
 
 
-## ============================================================
-## Figure 1: Harrell's C-index vs censoring rate
-## ============================================================
 dev.new(width = 10, height = 4.2)
 plot_metric_panels(
   metric_med = "harrell_c_med",
@@ -190,10 +163,6 @@ plot_metric_panels(
 )
 save_and_show("fig1_c_index.png", width = 10, height = 4.2)
 
-
-## ============================================================
-## Figure 2: Integrated Brier score vs censoring rate
-## ============================================================
 dev.new(width = 10, height = 4.2)
 plot_metric_panels(
   metric_med = "ibs_med",
@@ -206,9 +175,6 @@ plot_metric_panels(
 save_and_show("fig2_ibs.png", width = 10, height = 4.2)
 
 
-## ============================================================
-## Figure 3: Calibration slope (grouped bar chart)
-## ============================================================
 dev.new(width = 10, height = 4.2)
 
 layout_mat <- matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE)
@@ -265,13 +231,6 @@ legend("center", legend = model_labels, fill = model_colors[model_order],
 save_and_show("fig3_calib_slope.png", width = 10, height = 4.2)
 
 
-## ============================================================
-## Figure 4: Empirical partition of the (c, EPV) plane
-##
-## Each point = one (dataset, regime) cell, labeled by the
-## model that achieved the highest median C-index. This is the
-## key figure for Section VI.
-## ============================================================
 
 ## Compute best model per (dataset, regime) cell
 best_per_cell <- do.call(rbind, lapply(
@@ -404,9 +363,6 @@ for (i in seq_along(time_pooled)) {
 save_and_show("fig5_fit_time.png", width = 6, height = 4)
 
 
-## ============================================================
-## Summary: print the partition table for Section VI
-## ============================================================
 cat("\n=== Partition table (for Table II in the paper) ===\n")
 print(best_per_cell[order(best_per_cell$epv_obs), 
                     c("dataset", "regime", "c_obs", "epv_obs",
