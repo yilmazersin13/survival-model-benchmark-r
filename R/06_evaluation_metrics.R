@@ -1,40 +1,7 @@
 ## 06_evaluation_metrics.R
 ##
 
-##
-##   1. Harrell's concordance index               -> harrell_c()
-##   2. Uno's time-dependent concordance          -> uno_c()
-##   3. Integrated Brier score                    -> integrated_brier_score()
-##   4. Calibration slope at a fixed horizon      -> calibration_slope()
-##
-## Calling convention. Every metric takes the same first three
-## arguments:
-##
-##   time_test   numeric vector, observed times in the test fold
-##   event_test  integer vector in {0,1}, event indicators
-##   prediction  the prediction object (shape depends on metric)
-##
 
-##
-##   harrell_c              numeric risk score, one per subject
-##                          (higher = higher predicted hazard)
-##   uno_c                  numeric risk score, one per subject
-##   integrated_brier_score numeric matrix, n_test x length(times),
-##                          containing predicted survival
-##                          probabilities S(t | x) at each
-##                          evaluation time
-##   calibration_slope      numeric vector of length n_test,
-##                          predicted survival probability at the
-##                          fixed horizon, one per subject
-##
-
-## Dependencies. We use:
-##   - survival::concordance() for Harrell's C, which matches
-##     the user's existing METABRIC code and is the canonical
-##     R implementation.
-##   - survival::survfit() for Kaplan-Meier estimates of the
-##     censoring distribution, used by IBS and Uno's C.
-##   - Base R for the calibration slope (a simple GLM).
 
 
 
