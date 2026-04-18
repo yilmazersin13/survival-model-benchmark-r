@@ -1,58 +1,13 @@
 ## ============================================================
 ## 05b_pycox_wrappers.R
-##
-## Wrappers around pycox's deep survival models, accessed from
-## R via reticulate. Two fitters:
-##
-##   fit_deepsurv()   DeepSurv (Katzman et al. 2018), implemented
-##                    as pycox.models.CoxPH. Section III-B.
-##   fit_cox_time()   Cox-Time (Kvamme, Borgan & Scheel 2019),
-##                    implemented as pycox.models.CoxTime.
-##                    Section III-B.
-##
-## Both fitters expose the same eight-slot return list as the
-## R-native fitters in 05_model_fitters.R, so downstream code
-## can call them interchangeably:
-##
-##   $model_class       "deepsurv" | "cox_time"
-##   $raw_fit           the underlying pycox model object (Python
-##                      reference, not directly usable from R)
-##   $coef              NULL (deep models do not have linear coef)
-##   $predict_risk      function(X_new) -> numeric vector
-##   $predict_survival  function(X_new, times) -> matrix
-##   $hyperparams       list of final hyperparameters used
-##   $fit_time_sec      numeric, wall-clock seconds for the fit
-##
-## Hyperparameter search. Section IV-D specifies a small random
-## search over learning rate, dropout, hidden layer width, and
-## number of hidden layers, with early stopping on an inner
-## validation split. The wrappers below implement this with a
-## fixed budget controlled by the n_random_search argument.
-## Defaults are kept modest to match the budget-matched design
-## of Section IV-D.
-##
-## CPU vs GPU. The wrappers are CPU-only by default. PyTorch will
-## use whatever device is available; on a machine without CUDA
-## this is automatic. No code changes needed for GPU machines.
-##
-## Reproducibility. The fitters seed both R's RNG (for the
-## random search and the validation split) and Python's torch
-## RNG (for network weight initialization and the training
-## loop). Given the same seed, the same data, and the same
-## search budget, the fits are reproducible up to PyTorch's
-## documented non-determinism on multi-threaded CPU operations.
-## ============================================================
+
+
 
 suppressPackageStartupMessages({
   library(reticulate)
 })
 
-## ------------------------------------------------------------
-## Lazy module loader. Importing the Python modules at file
-## sourcing time would force every user of the library to have
-## pycox installed even if they never call the deep fitters.
-## We import on first use instead.
-## ------------------------------------------------------------
+
 .pycox_state <- new.env(parent = emptyenv())
 
 .ensure_pycox <- function() {
@@ -62,34 +17,16 @@ suppressPackageStartupMessages({
   .pycox_state$tt          <- import("torchtuples")
   .pycox_state$pycox       <- import("pycox")
   .pycox_state$pycox_models <- import("pycox.models")
-  ## Numpy is imported with convert = FALSE so that the input
-  ## chain np$ascontiguousarray(X)$astype("float32") returns a
-  ## Python reference rather than auto-converting back to R.
-  ## On the OUTPUT path, pycox returns pandas DataFrames that
-  ## reticulate auto-converts to R data frames (because pycox
-  ## itself was imported with default convert = TRUE), so the
-  ## predict closures handle them as plain R objects with no
-  ## further conversion needed.
+
   .pycox_state$np          <- import("numpy", convert = FALSE)
   .pycox_state$loaded      <- TRUE
   invisible()
 }
 
 
-## ------------------------------------------------------------
-## Internal helper: convert R training data into the float32
-## numpy arrays that pycox expects. pycox is strict about
-## dtypes — passing float64 silently degrades training and
-## passing the wrong shape raises cryptic Python errors.
-## ------------------------------------------------------------
 .to_pycox_arrays <- function(X, time, event) {
   np <- .pycox_state$np
-  ## With np imported as convert = FALSE (see .ensure_pycox),
-  ## np$ascontiguousarray() returns a Python reference rather
-  ## than auto-converting back to R, so $astype() chains work.
-  ## ascontiguousarray + astype together guarantee a fresh,
-  ## contiguous, writable, float32 buffer that survives the
-  ## hand-off to torch.from_numpy().
+
   X_np      <- np$ascontiguousarray(X)$astype("float32")
   durations <- np$ascontiguousarray(as.numeric(time))$astype("float32")
   events    <- np$ascontiguousarray(as.numeric(event))$astype("float32")
@@ -97,13 +34,6 @@ suppressPackageStartupMessages({
 }
 
 
-## ------------------------------------------------------------
-## Internal helper: split training rows into sub-train and
-## validation for the early-stopping signal. We use a stratified
-## 80/20 split on the event indicator to keep event proportions
-## stable, matching the spirit of the stratified outer CV in
-## 04_cv_scaffolding.R.
-## ------------------------------------------------------------
 .train_val_split <- function(n, event, val_frac = 0.2, seed = 1L) {
   set.seed(seed)
   is_event <- which(event == 1)
@@ -117,23 +47,10 @@ suppressPackageStartupMessages({
 }
 
 
-## ------------------------------------------------------------
-## Internal helper: build a torchtuples MLPVanilla network with
-## the given architecture. Returns a Python network object ready
-## to be passed to pycox.models.CoxPH() or CoxTime().
-##
-## CoxTime expects an extra time input dimension on the first
-## layer; the MLPVanillaCoxTime helper handles this. We use the
-## right one based on `with_time`.
-## ------------------------------------------------------------
+
 .make_network <- function(in_features, num_nodes, dropout, with_time) {
   tt <- .pycox_state$tt
-  ## Force num_nodes to a Python list, not a scalar. reticulate
-  ## auto-scalarizes length-1 R vectors, so as.integer(c(64)) ends
-  ## up as Python int(64). pycox then tries num_nodes[0] and raises
-  ## "tuple index out of range" because ints are not subscriptable.
-  ## Wrapping in r_to_py(as.list(...)) preserves list semantics for
-  ## any length, including 1.
+
   num_nodes_py <- r_to_py(as.list(as.integer(num_nodes)))
   
   if (with_time) {
@@ -159,13 +76,6 @@ suppressPackageStartupMessages({
 }
 
 
-## ------------------------------------------------------------
-## Internal helper: train one network configuration and return
-## (model, val_loss). Used by the random search loop. If
-## training raises a Python exception (NaN loss, etc.), returns
-## NULL for the model and Inf for the loss so the search can
-## skip that configuration.
-## ------------------------------------------------------------
 .train_one_config <- function(model_class,
                               X_tr, dur_tr, evt_tr,
                               X_val, dur_val, evt_val,
@@ -187,19 +97,7 @@ suppressPackageStartupMessages({
     y_tr_use  <- tuple(dur_tr,  evt_tr)
     y_val_use <- tuple(dur_val, evt_val)
   } else if (model_class == "cox_time") {
-    ## CoxTime requires standardized durations. The labtrans
-    ## utility handles this and is mandatory for CoxTime.
-    ## Pass the durations and events as separate R objects
-    ## (the float32 numpy arrays from .to_pycox_arrays), not as
-    ## elements of a Python tuple, because indexing a Python
-    ## tuple with R's [[i]] uses 0-based semantics inconsistently
-    ## across reticulate versions.
-    ## NOTE on dtype: labtrans$fit_transform() returns float64
-    ## arrays even when fed float32 input. The network expects
-    ## float32, so we recast the labtrans output back to float32
-    ## via a tiny Python helper. Doing the recast in Python
-    ## avoids having to index Python tuples from R, which has
-    ## been the source of repeated bugs in this wrapper.
+
     labtrans <- pycox_models$CoxTime$label_transform()
     y_tr_raw  <- labtrans$fit_transform(dur_tr,  evt_tr)
     y_val_raw <- labtrans$transform(dur_val, evt_val)
@@ -255,22 +153,6 @@ suppressPackageStartupMessages({
 }
 
 
-## ============================================================
-## fit_deepsurv()
-##
-## DeepSurv via pycox.models.CoxPH. Section III-B.
-##
-## Random hyperparameter search over:
-##   - learning rate     {1e-4, 1e-3, 1e-2}
-##   - dropout           {0.0, 0.1, 0.3, 0.5}
-##   - hidden width      {32, 64, 128}
-##   - number of layers  {1, 2, 3}
-##
-## Default search budget n_random_search = 8 configurations.
-## Each is trained with early stopping on a 20% validation split.
-## The best-validation-loss configuration is retrained on the
-## full training fold and used for prediction.
-## ============================================================
 fit_deepsurv <- function(X_train, time_train, event_train,
                          inner_cv = NULL, seed = NULL,
                          n_random_search = 8,
@@ -381,27 +263,12 @@ fit_deepsurv <- function(X_train, time_train, event_train,
   
   predict_survival <- function(X_new, times) {
     X_new_np <- .pycox_state$np$ascontiguousarray(X_new)$astype("float32")
-    ## predict_surv_df returns a pandas DataFrame indexed by
-    ## time, with one column per subject. We evaluate it at
-    ## the requested times.
-    ## predict_surv_df() returns an R data frame thanks to
-    ## reticulate auto-conversion on the pycox import. Row names
-    ## are the time grid (in days), column names are subject
-    ## indices, and cells are predicted survival probabilities.
+
     surv_df <- raw_fit$predict_surv_df(X_new_np)
     surv_mat <- as.matrix(surv_df)
     base_times <- as.numeric(rownames(surv_df))
     
-    ## Step-function interpolation onto the requested grid.
-    ## Two edge cases that matter for the benchmark:
-    ##   - times[k] BEFORE pycox's grid starts: use the earliest
-    ##     available row of surv_mat rather than constant 1.
-    ##     Returning constant 1 destroys all between-subject
-    ##     variation and breaks the calibration regression.
-    ##   - times[k] AFTER pycox's grid ends: use the last
-    ##     available row rather than 0. Returning 0 inflates
-    ##     IBS contributions because the squared error becomes
-    ##     (1 - 0)^2 = 1 for every still-at-risk subject.
+
     n_new <- nrow(X_new)
     n_grid <- length(base_times)
     out <- matrix(1, nrow = n_new, ncol = length(times))
@@ -429,15 +296,6 @@ fit_deepsurv <- function(X_train, time_train, event_train,
 }
 
 
-## ============================================================
-## fit_cox_time()
-##
-## Cox-Time via pycox.models.CoxTime. Section III-B. Same
-## random search structure as DeepSurv. The internal handling
-## of the time input is delegated to pycox's MLPVanillaCoxTime
-## network, and the durations are standardized via the labtrans
-## utility (mandatory for CoxTime per the pycox documentation).
-## ============================================================
 fit_cox_time <- function(X_train, time_train, event_train,
                          inner_cv = NULL, seed = NULL,
                          n_random_search = 8,
@@ -547,16 +405,10 @@ fit_cox_time <- function(X_train, time_train, event_train,
   
   predict_risk <- function(X_new) {
     X_new_np <- .pycox_state$np$ascontiguousarray(X_new)$astype("float32")
-    ## For Cox-Time, "risk" is a model-internal quantity that
-    ## depends on time. We summarize it as the time-integrated
-    ## log relative risk at the median training event time, so
-    ## the result is a single number per subject usable by the
-    ## C-index. This is the standard approach for Cox-Time
-    ## risk ranking (Kvamme et al. 2019, Section 4.1).
+
     surv_df <- raw_fit$predict_surv_df(X_new_np)
     surv_mat <- as.matrix(surv_df)
-    ## Use -log(S(t_med)) as the risk score; higher means higher
-    ## hazard, matching the harrell_c sign convention.
+
     n_t <- nrow(surv_mat)
     t_med_row <- max(1, floor(n_t / 2))
     surv_med <- surv_mat[t_med_row, ]
@@ -596,9 +448,5 @@ fit_cox_time <- function(X_train, time_train, event_train,
 }
 
 
-## ------------------------------------------------------------
-## %||% operator for "use right side if left is NULL". Defined
-## here for self-containment in case the user has not loaded
-## rlang or purrr.
-## ------------------------------------------------------------
+
 `%||%` <- function(a, b) if (is.null(a)) b else a
