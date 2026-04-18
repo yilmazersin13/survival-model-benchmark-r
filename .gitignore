@@ -1,49 +1,79 @@
-# History files
+
+# R / RStudio
+
 .Rhistory
 .Rapp.history
-
-# Session Data files
 .RData
-.RDataTmp
-
-# User-specific files
 .Ruserdata
-
-# Example code in package build process
-*-Ex.R
-
-# Output files from R CMD build
-/*.tar.gz
-
-# Output files from R CMD check
-/*.Rcheck/
-
-# RStudio files
 .Rproj.user/
+*.Rproj
 
-# produced vignettes
-vignettes/*.html
-vignettes/*.pdf
 
-# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
-.httr-oauth
+# OS files
 
-# knitr and R markdown default cache directories
-*_cache/
-/cache/
+.DS_Store
+Thumbs.db
 
-# Temporary files created by R markdown
-*.utf8.md
-*.knit.md
 
-# R Environment Variables
-.Renviron
+# Python / reticulate /virtual envs
 
-# pkgdown site
-docs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+ENV/
+.python-version
 
-# translation temp files
-po/*~
+# Jupyter
+.ipynb_checkpoints/
 
-# RStudio Connect folder
-rsconnect/
+
+# Generated benchmark outputs
+
+benchmark_results/
+results/
+figures/
+
+
+
+
+# Data files
+
+data/*
+!data/README.md
+!data/.gitkeep
+
+# Common data extensions
+*.rds
+*.RDS
+*.rda
+*.RData
+*.csv.gz
+*.tsv.gz
+*.parquet
+*.feather
+*.h5
+*.hdf5
+
+
+# Logs / temp files
+
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Stan / compiled / cache artifacts
+
+*.o
+*.so
+*.dll
+*.dylib
+
+
+# Quarto / misc build files if later added
+_site/
+.quarto/
