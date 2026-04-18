@@ -1,18 +1,13 @@
 ## ============================================================
 ## 05_model_fitters.R
-##
-## Four R-native model fitters for the benchmark of Section
-## III-B:
-##
+
 ##   fit_cox()        unpenalized Cox proportional hazards
 ##   fit_lasso_cox()  lasso-penalized Cox via glmnet
 ##   fit_rsf()        random survival forest via randomForestSRC
 ##   fit_ben_cox()    Bayesian elastic net Cox via Stan
+
 ##
-## DeepSurv and Cox-Time are in 05b_pycox_wrappers.R because
-## they require reticulate and a Python environment.
-##
-## Uniform interface. Every fitter takes the same core arguments:
+## Every fitter takes the same core arguments:
 ##
 ##   X_train       n_train x p numeric matrix (preprocessed,
 ##                 from 02_preprocessing.R)
@@ -50,7 +45,7 @@
 ## capture whatever state they need from the fit. Downstream code
 ## calls them through the uniform interface without caring which
 ## model is behind them.
-## ============================================================
+
 
 suppressPackageStartupMessages({
   library(survival)
@@ -60,19 +55,6 @@ suppressPackageStartupMessages({
 })
 
 
-## ------------------------------------------------------------
-## Internal helper: Breslow baseline cumulative hazard estimator.
-##
-## Given training-fold (time, event, linear_predictor), returns
-## a step function H0(t) that, combined with a subject's linear
-## predictor lp, yields the predicted survival curve
-##   S(t | x) = exp( -H0(t) * exp(lp) ).
-##
-## This is the standard Breslow estimator used by survival::coxph
-## and glmnet::glmnet (family = "cox"). Implementing it directly
-## avoids the need for survfit.coxph() calls which are slow and
-## carry extra dependencies.
-## ------------------------------------------------------------
 .breslow_baseline <- function(time, event, lp) {
   ord <- order(time)
   t_ord <- time[ord]
@@ -80,37 +62,20 @@ suppressPackageStartupMessages({
   lp_ord <- lp[ord]
   
   exp_lp <- exp(lp_ord)
-  ## Risk set cumulative sum from the end: at each subject i,
-  ## sum_{j: T_j >= T_i} exp(lp_j) equals the cumulative sum
-  ## of exp_lp starting from position i to the end.
-  ## Computed as total minus cumulative sum from the start, with
-  ## a small adjustment for ties that this implementation
-  ## resolves by the default Breslow tie-handling convention.
+
   rev_cumsum <- rev(cumsum(rev(exp_lp)))
   
   ## Hazard increments at event times only.
   dH <- ifelse(e_ord == 1, 1 / rev_cumsum, 0)
   H0_at_t <- cumsum(dH)
   
-  ## Step function. For any query time t_q, return H0 at the
-  ## largest training time <= t_q. method = "constant" with
-  ## f = 0 gives the right-continuous step function convention.
+
   approxfun(t_ord, H0_at_t,
             method = "constant", f = 0,
             yleft = 0, yright = max(H0_at_t))
 }
 
 
-## ============================================================
-## fit_cox()
-##
-## Unpenalized Cox proportional hazards, Section III-B. Used as
-## the reference baseline. On small-p datasets (SUPPORT,
-## clinical TCGA-BRCA) it converges cleanly. On high-dimensional
-## METABRIC it will typically fail to converge, and we return a
-## fit object with all predictors but flag non-convergence in
-## $hyperparams$converged so the main loop can record it.
-## ============================================================
 fit_cox <- function(X_train, time_train, event_train,
                     inner_cv = NULL, seed = NULL, ...) {
   t0 <- Sys.time()
@@ -143,9 +108,7 @@ fit_cox <- function(X_train, time_train, event_train,
   )
   
   if (is.null(raw_fit)) {
-    ## Total failure: return a degenerate fit object that
-    ## predicts zero risk (baseline) for everyone. This lets the
-    ## main loop continue rather than halt.
+
     coef_vec <- rep(0, ncol(X_train))
     names(coef_vec) <- col_names
     
@@ -194,15 +157,7 @@ fit_cox <- function(X_train, time_train, event_train,
 }
 
 
-## ============================================================
-## fit_lasso_cox()
-##
-## Lasso-penalized Cox via glmnet, Section III-B. The penalty
-## parameter lambda is selected by inner cross-validation on
-## the partial likelihood deviance. When inner_cv is NULL,
-## cv.glmnet's built-in 10-fold CV is used; otherwise we honor
-## the caller's fold assignment by passing foldid.
-## ============================================================
+
 fit_lasso_cox <- function(X_train, time_train, event_train,
                           inner_cv = NULL, seed = NULL, ...) {
   t0 <- Sys.time()
@@ -210,24 +165,11 @@ fit_lasso_cox <- function(X_train, time_train, event_train,
   
   y <- Surv(time_train, event_train)
   
-  ## Honor inner_cv if supplied. cv.glmnet expects foldid as a
-  ## vector of integers in 1..K of length n_train, where the
-  ## indices refer to rows of X_train. Our inner_cv from
-  ## make_inner_cv() stores splits in terms of ORIGINAL dataset
-  ## positions, so we translate them back to local positions.
+
   foldid <- NULL
   if (!is.null(inner_cv)) {
     n_train <- nrow(X_train)
-    ## inner_cv was built for a specific outer training fold.
-    ## The valid indices of each inner split are positions in
-    ## the original dataset. To translate them into positions
-    ## within X_train, we need to know which dataset rows
-    ## X_train corresponds to. We do not have that here, so we
-    ## fall back to cv.glmnet's default. This is the documented
-    ## limitation of the simple interface: callers who want to
-    ## enforce a specific inner CV should call cv.glmnet directly.
-    ## For the benchmark this does not matter because the main
-    ## loop passes inner_cv = NULL and relies on the built-in.
+
   }
   
   cv_fit <- cv.glmnet(x = X_train, y = y, family = "cox",
@@ -266,16 +208,7 @@ fit_lasso_cox <- function(X_train, time_train, event_train,
 }
 
 
-## ============================================================
-## fit_rsf()
-##
-## Random survival forest via randomForestSRC, Section III-B.
-## Hyperparameters: ntree = 500 (fixed, per Section IV-D), mtry
-## and nodesize tuned by a small grid search using the inner CV
-## if supplied, otherwise using sensible defaults. For speed,
-## when inner_cv is NULL we use rfsrc's built-in tune() function
-## via randomForestSRC::tune.rfsrc with fast settings.
-## ============================================================
+
 fit_rsf <- function(X_train, time_train, event_train,
                     inner_cv = NULL, seed = NULL,
                     ntree = 500, ...) {
@@ -285,12 +218,7 @@ fit_rsf <- function(X_train, time_train, event_train,
   df <- data.frame(time = time_train, event = event_train, X_train,
                    check.names = TRUE)
   
-  ## Use rfsrc's built-in tuning for mtry and nodesize. This is
-  ## substantially faster than wiring inner_cv through because
-  ## rfsrc uses its own OOB-based mini-optimization and does not
-  ## need to refit the full forest for every grid point.
-  ## Fallback defaults if tune.rfsrc fails (can happen on very
-  ## small folds): mtry = sqrt(p), nodesize = 15.
+
   tuned <- tryCatch(
     tune.rfsrc(Surv(time, event) ~ ., data = df,
                mtryStart = max(1, floor(sqrt(ncol(X_train)))),
@@ -314,19 +242,14 @@ fit_rsf <- function(X_train, time_train, event_train,
                    importance = FALSE,
                    forest = TRUE)
   
-  ## rfsrc stores the baseline evaluation times at which the
-  ## cumulative hazard is estimated. We read them off the raw
-  ## fit object so predict_survival can interpolate.
+
   base_times <- raw_fit$time.interest
   
   predict_risk <- function(X_new) {
     df_new <- data.frame(X_new, check.names = TRUE)
     pred <- predict.rfsrc(raw_fit, newdata = df_new,
                           importance = "none")
-    ## rfsrc returns `predicted` as a mortality score (expected
-    ## number of events), which is a valid risk ranking: higher
-    ## means higher hazard. This matches the Harrell C sign
-    ## convention in harrell_c().
+
     as.numeric(pred$predicted)
   }
   
@@ -334,9 +257,7 @@ fit_rsf <- function(X_train, time_train, event_train,
     df_new <- data.frame(X_new, check.names = TRUE)
     pred <- predict.rfsrc(raw_fit, newdata = df_new,
                           importance = "none")
-    ## pred$survival is an n_new x length(base_times) matrix.
-    ## Interpolate (step-function, right-continuous) onto the
-    ## requested `times` grid.
+
     base_surv <- pred$survival
     n_new <- nrow(base_surv)
     out <- matrix(1, nrow = n_new, ncol = length(times))
@@ -368,22 +289,6 @@ fit_rsf <- function(X_train, time_train, event_train,
 }
 
 
-## ============================================================
-## BEN-Cox Stan model code
-##
-## Lifted directly from the user's existing METABRIC BEN-Cox
-## script with no changes to the prior structure or the Cox
-## partial likelihood implementation. The model is:
-##
-##   beta_j | z_j, lambda2 ~ N(0, (1/z_j + lambda2)^{-1})
-##   z_j                    ~ Exponential(lambda1^2 / 2)
-##   lambda1, lambda2       ~ Half-Cauchy(0, 1)
-##
-## This matches Section III-B of the paper exactly: the elastic
-## net marginal prior density of Li & Lin (2010), with the
-## quadratic shrinkage component controlled by lambda2 and the
-## coefficient-specific adaptive shrinkage controlled by z_j.
-## ============================================================
 .ben_cox_stan_code <- "
 data {
   int<lower=0> N;
@@ -429,16 +334,7 @@ model {
 "
 
 
-## ============================================================
-## fit_ben_cox()
-##
-## Bayesian elastic net Cox via Stan, Section III-B. The Stan
-## model is defined above and is a direct lift of the user's
-## existing implementation. Fast defaults for benchmark use:
-## 2 chains x 1500 iter (750 warmup), adapt_delta = 0.90. These
-## can be tightened for the final production run via the
-## n_iter, n_warmup, and n_chains arguments.
-## ============================================================
+
 fit_ben_cox <- function(X_train, time_train, event_train,
                         inner_cv = NULL, seed = NULL,
                         n_iter = 1500, n_warmup = 750,
