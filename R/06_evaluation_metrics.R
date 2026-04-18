@@ -1,8 +1,6 @@
-## ============================================================
 ## 06_evaluation_metrics.R
 ##
-## The four predictive performance metrics specified in
-## Section III-C of the paper:
+
 ##
 ##   1. Harrell's concordance index               -> harrell_c()
 ##   2. Uno's time-dependent concordance          -> uno_c()
@@ -16,8 +14,7 @@
 ##   event_test  integer vector in {0,1}, event indicators
 ##   prediction  the prediction object (shape depends on metric)
 ##
-## followed by metric-specific arguments. The shape of `prediction`
-## is fixed per metric:
+
 ##
 ##   harrell_c              numeric risk score, one per subject
 ##                          (higher = higher predicted hazard)
@@ -30,11 +27,7 @@
 ##                          predicted survival probability at the
 ##                          fixed horizon, one per subject
 ##
-## The model fitters in 05_model_fitters.R will expose
-## predict_risk() and predict_survival() methods that return
-## these objects directly. The main loop will call the right
-## predictor for the right metric.
-##
+
 ## Dependencies. We use:
 ##   - survival::concordance() for Harrell's C, which matches
 ##     the user's existing METABRIC code and is the canonical
@@ -42,34 +35,15 @@
 ##   - survival::survfit() for Kaplan-Meier estimates of the
 ##     censoring distribution, used by IBS and Uno's C.
 ##   - Base R for the calibration slope (a simple GLM).
-##
-## We deliberately do NOT use survAUC or pec for these. Both are
-## reasonable alternatives but pec in particular has a heavy
-## dependency footprint and survAUC is no longer well maintained.
-## Reimplementing the four metrics from first principles in
-## ~250 lines keeps the dependency surface small and lets us
-## verify correctness against the paper's definitions directly.
-## ============================================================
+
+
 
 suppressPackageStartupMessages({
   library(survival)
 })
 
 
-## ============================================================
-## harrell_c()
-##
-## Harrell's concordance index, Section III-C. Estimates the
-## probability that, for a randomly chosen comparable pair, the
-## subject with the higher predicted risk experiences the event
-## first.
-##
-## We use survival::concordance() which is the canonical
-## implementation. Note the sign convention: concordance() expects
-## a covariate to enter Surv ~ I(...) such that LARGER values
-## indicate LONGER survival, so a risk score (where larger means
-## SHORTER survival) is passed in negated.
-## ============================================================
+
 harrell_c <- function(time_test, event_test, prediction) {
   if (length(prediction) != length(time_test)) {
     stop("harrell_c: prediction length does not match time_test")
@@ -90,37 +64,7 @@ harrell_c <- function(time_test, event_test, prediction) {
 }
 
 
-## ============================================================
-## uno_c()
-##
-## Uno's inverse-probability-of-censoring-weighted concordance
-## measure (Uno et al., 2011), Section III-C. Mitigates the
-## dependence of Harrell's C on the censoring distribution and
-## is more appropriate in the high-censoring regimes studied in
-## the paper.
-##
-## Implementation:
-##   - Estimate the censoring survival function G(t) using a
-##     Kaplan-Meier fit on the REVERSED event indicator
-##     (1 - event), evaluated on the training data passed in
-##     via `time_train` and `event_train`. Using training data
-##     for G() rather than test data is the standard convention
-##     and avoids contaminating the test metric with test-set
-##     censoring structure.
-##   - For each comparable pair (i, j) with subject i having an
-##     observed event at time T_i < T_j, contribute the weight
-##     1 / G(T_i)^2 to the denominator and the same weight times
-##     the concordance indicator to the numerator.
-##   - The truncation horizon `tau` defaults to the 90th
-##     percentile of observed test event times to avoid
-##     instability where G(t) approaches zero.
-##
-## This is implemented from first principles rather than via a
-## package because (a) the standard R implementations
-## (survAUC::UnoC, survC1::Inf.Cval) have inconsistent maintenance
-## status, and (b) a 30-line implementation is auditable against
-## Equation (4.2) of Uno et al., 2011.
-## ============================================================
+
 uno_c <- function(time_test, event_test, prediction,
                   time_train, event_train, tau = NULL) {
   if (length(prediction) != length(time_test)) {
@@ -147,9 +91,7 @@ uno_c <- function(time_test, event_test, prediction,
   km_cens <- survival::survfit(
     survival::Surv(time_train, 1 - event_train) ~ 1
   )
-  ## Step function for G(t). approxfun with method = "constant"
-  ## and f = 0 gives the right-continuous step function that is
-  ## the convention for Kaplan-Meier estimators.
+
   G_fun <- approxfun(km_cens$time, km_cens$surv,
                      method = "constant", f = 0,
                      yleft = 1, yright = min(km_cens$surv))
@@ -179,41 +121,7 @@ uno_c <- function(time_test, event_test, prediction,
 }
 
 
-## ============================================================
-## integrated_brier_score()
-##
-## Integrated Brier score (IBS), Section III-C. The Brier score
-## at time t is estimated consistently in the presence of
-## censoring using inverse-probability-of-censoring weights
-## (Graf et al., 1999), and integrated over a clinically
-## meaningful time horizon.
-##
-## Implementation follows Graf et al. (1999), Equation (12).
-## For each evaluation time t and each test subject i:
-##
-##   contribution_i(t) =
-##     1{T_i <= t, delta_i = 1} * (0 - S_hat(t | x_i))^2 / G(T_i)
-##   + 1{T_i >  t}             * (1 - S_hat(t | x_i))^2 / G(t)
-##
-## where G(.) is the Kaplan-Meier estimator of the censoring
-## distribution, fit on the training data. Subjects censored
-## before time t with no event contribute zero (their fate is
-## unknown).
-##
-## The IBS is the trapezoidal integral of BS(t) over the
-## evaluation grid divided by the grid length.
-##
-## Arguments:
-##   time_test     test fold times
-##   event_test    test fold event indicators
-##   prediction    n_test x length(eval_times) matrix of predicted
-##                 survival probabilities
-##   eval_times    numeric vector of evaluation time points,
-##                 strictly increasing, within the support of
-##                 the training time distribution
-##   time_train    training fold times (for G estimation)
-##   event_train   training fold event indicators
-## ============================================================
+
 integrated_brier_score <- function(time_test, event_test, prediction,
                                    eval_times,
                                    time_train, event_train) {
@@ -283,56 +191,7 @@ integrated_brier_score <- function(time_test, event_test, prediction,
 }
 
 
-## ============================================================
-## calibration_slope()
-##
-## Calibration slope at a fixed horizon, Section III-C. The
-## paper specifies: regress the observed event indicator on the
-## log cumulative hazard implied by each model at a pre-specified
-## evaluation horizon, defined consistently within each
-## dataset-regime combination, and report the resulting slope.
-##
-## Implementation. The natural regression on the log cumulative
-## hazard scale is a binomial GLM with the COMPLEMENTARY LOG-LOG
-## link. Under cloglog link, the linear predictor is
-## log(-log(1 - p)) where p is the event probability at the
-## horizon, which is exactly the log cumulative hazard scale of
-## a proportional-hazards model. The slope coefficient is then
-## directly comparable to 1: a value of 1 indicates perfect
-## calibration, values below 1 indicate overconfident risk
-## predictions, and values above 1 indicate underconfident
-## predictions.
-##
-## This is the calibration regression of Crowson, Atkinson &
-## Therneau (2016, Stat Methods Med Res), and is the appropriate
-## construction for fixed-horizon survival calibration. Mixing a
-## cloglog-scale linear predictor with a logit link (or vice
-## versa) produces a coefficient that has no clean interpretation
-## and does not have target value 1.
-##
-## Steps:
-##   - Convert predicted survival S_hat(tau | x) to predicted
-##     event probability  p_hat(tau | x) = 1 - S_hat(tau | x).
-##   - Form the cloglog-scale linear predictor
-##       eta = log(-log(1 - p_hat)) = log(-log(S_hat)),
-##     which is the log cumulative hazard at the horizon.
-##   - Define the binary outcome at the horizon:
-##       Z_i = 1 if T_i <= tau and delta_i = 1
-##       Z_i = 0 if T_i >  tau
-##     Subjects censored before tau (T_i < tau, delta_i = 0) are
-##     dropped, since their status at tau is unknown.
-##   - Fit  glm(Z ~ eta, family = binomial(link = "cloglog")) and
-##     return the slope coefficient on eta.
-##
-## Arguments:
-##   time_test, event_test  test fold survival data
-##   prediction             numeric vector of predicted survival
-##                          probabilities S_hat(tau | x), one per
-##                          test subject
-##   horizon                numeric scalar, the fixed evaluation
-##                          time tau, in the same units as
-##                          time_test (days)
-## ============================================================
+
 calibration_slope <- function(time_test, event_test, prediction,
                               horizon) {
   if (length(prediction) != length(time_test)) {
@@ -377,31 +236,6 @@ calibration_slope <- function(time_test, event_test, prediction,
 }
 
 
-## ============================================================
-## evaluate_all_metrics()
-##
-## Convenience wrapper that computes all four metrics for a
-## single fitted model on a single test fold. Returns a one-row
-## data frame in the canonical column order, suitable for
-## rbind-ing across folds and models.
-##
-## Arguments:
-##   time_test, event_test    test fold survival data
-##   risk                     numeric risk score, length n_test
-##                            (for harrell_c and uno_c)
-##   surv_matrix              n_test x length(eval_times) matrix
-##                            of predicted survival probabilities
-##                            (for IBS)
-##   surv_at_horizon          numeric vector of predicted S(tau | x)
-##                            (for calibration_slope)
-##   eval_times               IBS evaluation grid
-##   horizon                  calibration evaluation horizon
-##   time_train, event_train  training fold survival data, used
-##                            to estimate G(.) for IBS and Uno's C
-##
-## Returns a data frame with columns:
-##   harrell_c, uno_c, ibs, calib_slope
-## ============================================================
 evaluate_all_metrics <- function(time_test, event_test,
                                  risk,
                                  surv_matrix,
